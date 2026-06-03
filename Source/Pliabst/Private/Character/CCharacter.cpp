@@ -4,8 +4,11 @@
 #include "Character/CCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/WidgetComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GAS/CAbilitySystemComponent.h"
 #include "GAS/CAttributeSet.h"
+#include "GAS/CAbilitySystemStatics.h"
 #include "Widgets/OverHeadStatsGauge.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -15,11 +18,13 @@ ACCharacter::ACCharacter()
  	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
 	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
+	
 	CAbilitySystemComponent = CreateDefaultSubobject<UCAbilitySystemComponent>("CAbility System Component");
 	CAttributeSet = CreateDefaultSubobject<UCAttributeSet>("CAttribute Set");
 	OverHeadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>("Over Head Widget Component");
 	OverHeadWidgetComponent->SetupAttachment(GetRootComponent());
+
+
 }
 void ACCharacter::ServerSideInit()
 {
@@ -53,6 +58,8 @@ void ACCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	ConfigureOverHeadStatusWidget();
+
+	BindGASChangeDelegates();
 	
 }
 
@@ -74,6 +81,46 @@ UAbilitySystemComponent* ACCharacter::GetAbilitySystemComponent() const
 {
 	return CAbilitySystemComponent;
 }
+
+void ACCharacter::BindGASChangeDelegates()
+{
+	if (CAbilitySystemComponent)
+	{
+		CAbilitySystemComponent->RegisterGameplayTagEvent(UCAbilitySystemStatics::GetDeadStatTag()).AddUObject(this, &ACCharacter::DeathTagUpdated);
+	}
+}
+
+//void ACCharacter::DeathTagUpdated(const FGameplayTag Tag, int32 NewCount)
+//{
+//	if (NewCount != 0)
+//	{
+//		StartDeathSequence();
+//	}
+//	else
+//	{
+//		Respawn();
+//	}
+//}
+
+
+
+void ACCharacter::DeathTagUpdated(const FGameplayTag Tag, int32 NewCount)
+{
+	if (NewCount != 0)
+	{
+		if (!bIsDead)
+		{
+			bIsDead = true;
+			StartDeathSequence();
+		}
+	}
+	else
+	{
+		bIsDead = false;
+		Respawn();
+	}
+}
+
 
 void ACCharacter::ConfigureOverHeadStatusWidget()
 {
@@ -99,13 +146,169 @@ void ACCharacter::ConfigureOverHeadStatusWidget()
 	}
 }
 
+//void ACCharacter::UpdateHeadGaugeVisibility()
+//{
+//	APawn* LocalPlayerPawn = UGameplayStatics::GetPlayerPawn(this, 0);
+//	if (LocalPlayerPawn)
+//	{
+//		float DistSquared = FVector::DistSquared(GetActorLocation(), LocalPlayerPawn->GetActorLocation());
+//		OverHeadWidgetComponent->SetHiddenInGame(DistSquared > HeadStatGaugeVisibilityRangeSquared);
+//	}
+//}
+
 void ACCharacter::UpdateHeadGaugeVisibility()
 {
+	if (!OverHeadWidgetComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OverHeadWidgetComponent is null in UpdateHeadGaugeVisibility on %s"), *GetName());
+		return;
+	}
+
 	APawn* LocalPlayerPawn = UGameplayStatics::GetPlayerPawn(this, 0);
 	if (LocalPlayerPawn)
 	{
 		float DistSquared = FVector::DistSquared(GetActorLocation(), LocalPlayerPawn->GetActorLocation());
 		OverHeadWidgetComponent->SetHiddenInGame(DistSquared > HeadStatGaugeVisibilityRangeSquared);
 	}
+}
+
+
+void ACCharacter::SetStatusGaugeEnabled(bool bIsEnabled)
+{
+	// If the actor has no valid world (being destroyed / not initialized), bail out
+	if (!GetWorld())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetStatusGaugeEnabled called on %s with no valid World"), *GetName());
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(HeadStatGaugeVisibilityUpdateTimerHandle);
+
+	if (bIsEnabled)
+	{
+		ConfigureOverHeadStatusWidget();
+	}
+	else
+	{
+		if (OverHeadWidgetComponent)
+		{
+			OverHeadWidgetComponent->SetHiddenInGame(true);
+		}
+		/*else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("OverHeadWidgetComponent is null in SetStatusGaugeEnabled on %s"),
+				*GetName());
+		}*/
+	}
+}
+
+
+void ACCharacter::PlayDeathAnimation()
+{
+	if (DeathMontage)
+	{
+		PlayAnimMontage(DeathMontage);
+	}
+	
+}
+
+//void ACCharacter::StartDeathSequence()
+//{
+//	UE_LOG(LogTemp, Warning, TEXT("Dead"));
+//	OnDead();
+//	/*if (CAbilitySystemComponent)
+//	{
+//		CAbilitySystemComponent->CancelAllAbilities();
+//	}*/
+//
+//	PlayDeathAnimation();
+//	SetStatusGaugeEnabled(false);
+//
+//	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_None);
+//	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+//}
+
+void ACCharacter::StartDeathSequence()
+{
+	UE_LOG(LogTemp, Warning, TEXT("Dead"));
+
+	OnDead(); // if this is a delegate, make sure it’s only bound to valid objects
+
+	PlayDeathAnimation();
+	SetStatusGaugeEnabled(false);
+
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->SetMovementMode(EMovementMode::MOVE_None);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CharacterMovement is null in StartDeathSequence on %s"), *GetName());
+	}
+
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CapsuleComponent is null in StartDeathSequence on %s"), *GetName());
+	}
+}
+
+
+//void ACCharacter::Respawn()
+//{
+//	UE_LOG(LogTemp, Warning, TEXT("Respawn"));
+//	OnRespawn();
+//	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+//	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
+//	GetMesh()->GetAnimInstance()->StopAllMontages(0.f);
+//	SetStatusGaugeEnabled(true); //265
+//}
+
+void ACCharacter::Respawn()
+{
+	UE_LOG(LogTemp, Warning, TEXT("Respawn"));
+
+	OnRespawn();
+
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+		Move->SetMovementMode(EMovementMode::MOVE_Walking);
+
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		if (UAnimInstance* Anim = MeshComp->GetAnimInstance())
+			Anim->StopAllMontages(0.f);
+	}
+
+	// Only enable the gauge if the widget exists AND the world exists
+	if (OverHeadWidgetComponent && GetWorld())
+	{
+		SetStatusGaugeEnabled(true);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Skipping SetStatusGaugeEnabled during Respawn — component or world not ready"));
+	}
+
+	if (CAbilitySystemComponent)
+	{
+		CAbilitySystemComponent->ApplyFullStatEffect();
+	}
+}
+
+
+void ACCharacter::OnDead()
+{
+	
+}
+
+void ACCharacter::OnRespawn()
+{
+	
 }
 

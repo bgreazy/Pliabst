@@ -120,6 +120,14 @@ void UGA_Combo::ComboChangedEventReceived(FGameplayEventData Data)
 
 	TArray<FName> TagNames;
 	UGameplayTagsManager::Get().SplitGameplayTagFName(EventTag, TagNames);
+
+	if (TagNames.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("ComboChangedEventReceived: Tag '%s' produced NO tag names!"), *EventTag.ToString());
+		NextComboName = NAME_None;;
+		return;
+	}
+
 	NextComboName = TagNames.Last();
 
 	UE_LOG(LogTemp, Warning, TEXT("next combo is now: %s"), *NextComboName.ToString());
