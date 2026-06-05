@@ -58,6 +58,7 @@ void ACCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	ConfigureOverHeadStatusWidget();
+	MeshRelativeTransform = GetMesh()->GetRelativeTransform();
 
 	BindGASChangeDelegates();
 	
@@ -90,17 +91,6 @@ void ACCharacter::BindGASChangeDelegates()
 	}
 }
 
-//void ACCharacter::DeathTagUpdated(const FGameplayTag Tag, int32 NewCount)
-//{
-//	if (NewCount != 0)
-//	{
-//		StartDeathSequence();
-//	}
-//	else
-//	{
-//		Respawn();
-//	}
-//}
 
 
 
@@ -146,15 +136,7 @@ void ACCharacter::ConfigureOverHeadStatusWidget()
 	}
 }
 
-//void ACCharacter::UpdateHeadGaugeVisibility()
-//{
-//	APawn* LocalPlayerPawn = UGameplayStatics::GetPlayerPawn(this, 0);
-//	if (LocalPlayerPawn)
-//	{
-//		float DistSquared = FVector::DistSquared(GetActorLocation(), LocalPlayerPawn->GetActorLocation());
-//		OverHeadWidgetComponent->SetHiddenInGame(DistSquared > HeadStatGaugeVisibilityRangeSquared);
-//	}
-//}
+
 
 void ACCharacter::UpdateHeadGaugeVisibility()
 {
@@ -175,7 +157,7 @@ void ACCharacter::UpdateHeadGaugeVisibility()
 
 void ACCharacter::SetStatusGaugeEnabled(bool bIsEnabled)
 {
-	// If the actor has no valid world (being destroyed / not initialized), bail out
+
 	if (!GetWorld())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("SetStatusGaugeEnabled called on %s with no valid World"), *GetName());
@@ -194,45 +176,50 @@ void ACCharacter::SetStatusGaugeEnabled(bool bIsEnabled)
 		{
 			OverHeadWidgetComponent->SetHiddenInGame(true);
 		}
-		/*else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("OverHeadWidgetComponent is null in SetStatusGaugeEnabled on %s"),
-				*GetName());
-		}*/
+
 	}
 }
 
+
+void ACCharacter::DeathMontageFinished()
+{
+	SetRagdollEnabled(true);
+}
+
+void ACCharacter::SetRagdollEnabled(bool bIsEnabled)
+{
+	if (bIsEnabled)
+	{
+		GetMesh()->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		GetMesh()->SetSimulatePhysics(true);
+		GetMesh()->SetCollisionEnabled(ECollisionEnabled::PhysicsOnly);
+	}
+	else
+	{
+		GetMesh()->SetSimulatePhysics(false);
+		GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		GetMesh()->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+		GetMesh()->SetRelativeTransform(MeshRelativeTransform);
+	}
+}
 
 void ACCharacter::PlayDeathAnimation()
 {
 	if (DeathMontage)
 	{
-		PlayAnimMontage(DeathMontage);
+		float MontageDuration = PlayAnimMontage(DeathMontage);
+		GetWorldTimerManager().SetTimer(DeathMontageTimerHandle, this, &ACCharacter::DeathMontageFinished, MontageDuration + DeathMontageFinishTimeShift);
 	}
 	
 }
 
-//void ACCharacter::StartDeathSequence()
-//{
-//	UE_LOG(LogTemp, Warning, TEXT("Dead"));
-//	OnDead();
-//	/*if (CAbilitySystemComponent)
-//	{
-//		CAbilitySystemComponent->CancelAllAbilities();
-//	}*/
-//
-//	PlayDeathAnimation();
-//	SetStatusGaugeEnabled(false);
-//
-//	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_None);
-//	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-//}
+
 
 void ACCharacter::StartDeathSequence()
 {
 	UE_LOG(LogTemp, Warning, TEXT("Dead"));
 
-	OnDead(); // if this is a delegate, make sure it’s only bound to valid objects
+	OnDead();
 
 	PlayDeathAnimation();
 	SetStatusGaugeEnabled(false);
@@ -257,21 +244,14 @@ void ACCharacter::StartDeathSequence()
 }
 
 
-//void ACCharacter::Respawn()
-//{
-//	UE_LOG(LogTemp, Warning, TEXT("Respawn"));
-//	OnRespawn();
-//	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-//	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
-//	GetMesh()->GetAnimInstance()->StopAllMontages(0.f);
-//	SetStatusGaugeEnabled(true); //265
-//}
+
 
 void ACCharacter::Respawn()
 {
 	UE_LOG(LogTemp, Warning, TEXT("Respawn"));
 
 	OnRespawn();
+	SetRagdollEnabled(false);
 
 	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
 		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
